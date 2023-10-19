@@ -1,0 +1,15 @@
+[package]
+name = "heekkr-resolver-json-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+heekkr = "0.0.0"
+reqwest = { version = "0.11.22", features = ["json"] }
+serde = { version = "1.0.189", features = ["derive"] }
+tokio = { version = "1.33.0", features = ["full"] }
+tokio-stream = "0.1.14"
+tonic = "0.10.2"
+clap = { version = "4.4", features = ["derive"] }
