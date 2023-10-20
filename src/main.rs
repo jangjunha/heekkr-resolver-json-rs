@@ -6,7 +6,7 @@ use heekkr::kr::heek::{
     SearchResponse,
 };
 use resolver::{seoul_seocho::SeoulSeocho, Resolver};
-use tokio::time::timeout;
+use tokio::{task::JoinSet, time::timeout};
 use tokio_stream::Stream;
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -43,37 +43,38 @@ impl resolver_server::Resolver for JsonResolver {
         &self,
         request: Request<GetLibrariesRequest>,
     ) -> Result<Response<GetLibrariesResponse>, Status> {
-        let resolvers = resolver::all();
-        let (tx, rx) = mpsc::channel();
-
-        for resolver in resolvers {
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                let result = timeout(Duration::from_secs(5), resolver.get_libraries())
-                    .await
-                    .map_err(|_| Status::deadline_exceeded(""))
-                    .and_then(identity);
-                tx.send((resolver.id(), result)).unwrap();
-            });
+        let mut set = JoinSet::new();
+        for r in resolver::all() {
+            set.spawn(timeout(Duration::from_secs(5), async move {
+                let libs = r.get_libraries().await;
+                (r.id(), libs)
+            }));
         }
-        let libraries = rx
-            .into_iter()
-            .filter_map(|(resolver_id, result)| match result {
-                Ok(libs) => Some((resolver_id, libs)),
-                Err(_) => None,
-            })
-            .flat_map(|(resolver_id, libs)| {
-                libs.into_iter().map(move |l| Library {
-                    id: l.id,
-                    name: l.name,
-                    resolver_id: resolver_id.clone(),
-                    coordinate: l.coordinate.map(|c| LatLng {
-                        latitude: c.latitude as f64,
-                        longitude: c.longitude as f64,
-                    }),
-                })
-            })
-            .collect::<Vec<_>>();
+
+        let mut libraries: Vec<Library> = vec![];
+        while let Some(it) = set.join_next().await {
+            let res = it.unwrap();
+            match res {
+                Ok((resolver_id, Ok(libs))) => {
+                    for l in libs {
+                        let library = Library {
+                            id: l.id,
+                            name: l.name,
+                            resolver_id: resolver_id.clone(),
+                            coordinate: l.coordinate.map(|c| LatLng {
+                                latitude: c.latitude as f64,
+                                longitude: c.longitude as f64,
+                            }),
+                        };
+                        libraries.push(library);
+                    }
+                }
+                Ok((_, Err(e))) => {
+                    println!("{e:#?}");
+                }
+                Err(_) => {}
+            }
+        }
 
         let reply = GetLibrariesResponse { libraries };
         Ok(Response::new(reply))
@@ -89,7 +90,7 @@ impl resolver_server::Resolver for JsonResolver {
         let library_ids = request.get_ref().library_ids.clone();
 
         let resolvers = resolver::all();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel::<Result<SearchResponse, Status>>();
 
         for resolver in resolvers {
             let tx = tx.clone();
@@ -104,23 +105,21 @@ impl resolver_server::Resolver for JsonResolver {
                     .await
                     .map_err(|_| Status::deadline_exceeded(""))
                     .and_then(identity);
-                    tx.send(result).unwrap();
+
+                    if let Ok(entities) = result {
+                        let _ = tx.send(Ok(SearchResponse { entities }));
+                    };
                 }
             });
         }
-        let res = rx
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .map(|entities| SearchResponse { entities })
-            .map(Ok);
-
-        Ok(Response::new(Box::pin(tokio_stream::iter(res))))
+        Ok(Response::new(Box::pin(tokio_stream::iter(rx))))
     }
 }
 
 async fn serve(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let resolver = JsonResolver::default();
 
+    println!("Starting server at {addr}");
     Server::builder()
         .add_service(resolver_server::ResolverServer::new(resolver))
         .serve(addr)
