@@ -480,6 +480,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
+ "url",
 ]
 
 [[package]]

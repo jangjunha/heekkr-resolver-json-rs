@@ -1,6 +1,8 @@
 use heekkr::kr::heek::SearchEntity;
 use tonic::Status;
 
+mod eco;
+pub mod seoul_nowon;
 pub mod seoul_seocho;
 
 #[derive(Debug)]
@@ -28,5 +30,8 @@ pub trait Resolver {
 }
 
 pub fn all() -> Vec<Box<dyn Resolver + Sync + Send>> {
-    vec![Box::new(seoul_seocho::SeoulSeocho::new())]
+    vec![
+        Box::new(seoul_seocho::SeoulSeocho::new()),
+        Box::new(seoul_nowon::SeoulNowon::new()),
+    ]
 }

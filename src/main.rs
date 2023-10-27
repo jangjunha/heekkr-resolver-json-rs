@@ -1,18 +1,18 @@
-use std::{convert::identity, net::SocketAddr, pin::Pin, sync::mpsc, time::Duration};
+use std::{net::SocketAddr, pin::Pin};
 
 use clap::{Parser, Subcommand};
 use heekkr::kr::heek::{
-    resolver_server, GetLibrariesRequest, GetLibrariesResponse, LatLng, Library, SearchRequest,
-    SearchResponse,
+    resolver_server, GetLibrariesRequest, GetLibrariesResponse, SearchRequest, SearchResponse,
 };
-use resolver::{seoul_seocho::SeoulSeocho, Resolver};
-use tokio::{task::JoinSet, time::timeout};
-use tokio_stream::Stream;
+use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Server, Request, Response, Status};
+
+use search::{get_libraries, search};
 
 type SearchResponseStream = Pin<Box<dyn Stream<Item = Result<SearchResponse, Status>> + Send>>;
 
 mod resolver;
+mod search;
 
 #[derive(Parser)]
 struct Cli {
@@ -41,41 +41,9 @@ pub struct JsonResolver {}
 impl resolver_server::Resolver for JsonResolver {
     async fn get_libraries(
         &self,
-        request: Request<GetLibrariesRequest>,
+        _request: Request<GetLibrariesRequest>,
     ) -> Result<Response<GetLibrariesResponse>, Status> {
-        let mut set = JoinSet::new();
-        for r in resolver::all() {
-            set.spawn(timeout(Duration::from_secs(5), async move {
-                let libs = r.get_libraries().await;
-                (r.id(), libs)
-            }));
-        }
-
-        let mut libraries: Vec<Library> = vec![];
-        while let Some(it) = set.join_next().await {
-            let res = it.unwrap();
-            match res {
-                Ok((resolver_id, Ok(libs))) => {
-                    for l in libs {
-                        let library = Library {
-                            id: l.id,
-                            name: l.name,
-                            resolver_id: resolver_id.clone(),
-                            coordinate: l.coordinate.map(|c| LatLng {
-                                latitude: c.latitude as f64,
-                                longitude: c.longitude as f64,
-                            }),
-                        };
-                        libraries.push(library);
-                    }
-                }
-                Ok((_, Err(e))) => {
-                    println!("{e:#?}");
-                }
-                Err(_) => {}
-            }
-        }
-
+        let libraries = get_libraries().await;
         let reply = GetLibrariesResponse { libraries };
         Ok(Response::new(reply))
     }
@@ -86,33 +54,8 @@ impl resolver_server::Resolver for JsonResolver {
         &self,
         request: Request<SearchRequest>,
     ) -> Result<Response<Self::SearchStream>, Status> {
-        let term = request.get_ref().term.clone();
-        let library_ids = request.get_ref().library_ids.clone();
-
-        let resolvers = resolver::all();
-        let (tx, rx) = mpsc::channel::<Result<SearchResponse, Status>>();
-
-        for resolver in resolvers {
-            let tx = tx.clone();
-            tokio::spawn({
-                let term = term.clone();
-                let library_ids = library_ids.clone();
-                async move {
-                    let result = timeout(
-                        Duration::from_secs(15),
-                        resolver.search(&term, library_ids.clone()),
-                    )
-                    .await
-                    .map_err(|_| Status::deadline_exceeded(""))
-                    .and_then(identity);
-
-                    if let Ok(entities) = result {
-                        let _ = tx.send(Ok(SearchResponse { entities }));
-                    };
-                }
-            });
-        }
-        Ok(Response::new(Box::pin(tokio_stream::iter(rx))))
+        let stream = search(&request.get_ref().term, &request.get_ref().library_ids).await;
+        Ok(Response::new(stream))
     }
 }
 
@@ -137,14 +80,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             serve(*address).await?;
         }
         Commands::Libraries => {
-            let resolver = SeoulSeocho {};
-            let libraries = resolver.get_libraries().await?;
+            let libraries = get_libraries().await;
             println!("{libraries:#?}");
         }
         Commands::Search { keyword, library } => {
-            let resolver = SeoulSeocho {};
-            let response = resolver.search(&keyword, library.clone()).await?;
-            println!("{response:#?}");
+            let mut stream = search(keyword, library).await;
+            while let Some(value) = stream.next().await {
+                if let Ok(response) = value {
+                    println!("{response:#?}");
+                }
+            }
         }
     }
 
