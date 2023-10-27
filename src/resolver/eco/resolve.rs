@@ -5,21 +5,27 @@ use heekkr::kr::heek::{
     HoldingSummary, OnLoanStatus, SearchEntity, UnavailableStatus,
 };
 use reqwest::Client;
+use tokio::task::JoinSet;
 use tonic::Status;
 use url::Url;
 
 use super::parse::{LibrariesResponse, SearchBook, SearchPayload, SearchResponse};
-use crate::resolver::Library;
+use crate::{
+    location::search_keyword,
+    resolver::{Coordinate, Library},
+};
 
 pub struct Resolver {
     prefix: String,
+    search_prefix: String,
     host: Url,
 }
 
 impl Resolver {
-    pub fn new(prefix: &str, host: &str) -> Resolver {
+    pub fn new(prefix: &str, search_prefix: &str, host: &str) -> Resolver {
         return Resolver {
             prefix: prefix.to_owned(),
+            search_prefix: search_prefix.to_owned(),
             host: Url::parse(host).unwrap(),
         };
     }
@@ -41,17 +47,31 @@ impl Resolver {
             .await
             .map_err(|_| Status::unavailable("Failed to parse result"))?;
 
-        let libraries = response
+        let mut set = JoinSet::new();
+        for e in response
             .contents
             .lib_list
             .into_iter()
             .filter(|e| e.manage_code != "ALL")
-            .map(|e| Library {
-                id: format!("{}:{}", self.prefix, e.manage_code),
-                name: e.lib_name,
-                coordinate: None,
-            })
-            .collect::<Vec<_>>();
+        {
+            let id = format!("{}:{}", self.prefix, e.manage_code);
+            let keyword = format!("{} {}", self.search_prefix, e.lib_name);
+            set.spawn(async move {
+                Library {
+                    id,
+                    name: e.lib_name,
+                    coordinate: search_keyword(&keyword).await.map(|loc| Coordinate {
+                        latitude: loc.y,
+                        longitude: loc.x,
+                    }),
+                }
+            });
+        }
+
+        let mut libraries: Vec<Library> = Vec::new();
+        while let Some(Ok(library)) = set.join_next().await {
+            libraries.push(library);
+        }
 
         Ok(libraries)
     }

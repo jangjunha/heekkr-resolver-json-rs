@@ -13,7 +13,7 @@ pub struct SeoulNowon {
 impl SeoulNowon {
     pub fn new() -> SeoulNowon {
         SeoulNowon {
-            resolver: EcoResolver::new(PREFIX, "https://www.nowonlib.kr/"),
+            resolver: EcoResolver::new(PREFIX, "서울시 노원구", "https://www.nowonlib.kr/"),
         }
     }
 }

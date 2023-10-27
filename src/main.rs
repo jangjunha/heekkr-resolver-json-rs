@@ -11,6 +11,7 @@ use search::{get_libraries, search};
 
 type SearchResponseStream = Pin<Box<dyn Stream<Item = Result<SearchResponse, Status>> + Send>>;
 
+mod location;
 mod resolver;
 mod search;
 
