@@ -5,7 +5,9 @@ WORKDIR /app/
 RUN apk add musl-dev protoc
 
 COPY . .
-RUN cargo install --path .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo install --path .
 
 FROM alpine:3
 COPY --from=builder /usr/local/cargo/bin/heekkr-resolver-json-rs /usr/local/bin/heekkr-resolver-json-rs
