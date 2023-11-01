@@ -1,5 +1,8 @@
 use std::env;
+use std::time::Duration;
 
+use cached::proc_macro::io_cached;
+use cached_store_gcs::GcsCache;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Client,
@@ -48,40 +51,56 @@ impl Kakao {
 #[tonic::async_trait]
 impl LocationService for Kakao {
     async fn search_keyword(&self, keyword: &str) -> Result<Address, LocationErrors> {
-        let response = self
-            .client
-            .get("https://dapi.kakao.com/v2/local/search/keyword.json")
-            .query(&[("query", keyword), ("size", "1")])
-            .send()
-            .await
-            .map_err(|_| LocationErrors::SearchError {
-                msg: "search result error".to_owned(),
-            })?
-            .json::<Response>()
-            .await
-            .map_err(|_| LocationErrors::SearchError {
-                msg: "cannot deserialize response".to_owned(),
-            })?;
+        search_keyword(&self.client, keyword).await
+    }
+}
 
-        if let Some(document) = response.documents.first() {
-            Ok(Address {
-                x: document
-                    .x
-                    .parse()
-                    .map_err(|_| LocationErrors::SearchError {
-                        msg: "float parse error".to_owned(),
-                    })?,
-                y: document
-                    .y
-                    .parse()
-                    .map_err(|_| LocationErrors::SearchError {
-                        msg: "float parse error".to_owned(),
-                    })?,
-            })
-        } else {
-            Err(LocationErrors::SearchError {
-                msg: "no search result".to_owned(),
-            })
-        }
+#[io_cached(
+    map_error = r##"|_| LocationErrors::SearchError { msg: "cache error".to_owned() }"##,
+    type = "GcsCache<String, Address>",
+    create = r##" {
+        GcsCache::new(
+            Duration::from_secs(60 * 60 *  24 * 30),
+            "kakao-search-keyword/",
+        )
+        .await
+        .expect("error building gcs cache")
+    } "##,
+    convert = r#"{ keyword.to_owned() }"#
+)]
+async fn search_keyword(client: &Client, keyword: &str) -> Result<Address, LocationErrors> {
+    let response = client
+        .get("https://dapi.kakao.com/v2/local/search/keyword.json")
+        .query(&[("query", keyword), ("size", "1")])
+        .send()
+        .await
+        .map_err(|_| LocationErrors::SearchError {
+            msg: "search result error".to_owned(),
+        })?
+        .json::<Response>()
+        .await
+        .map_err(|_| LocationErrors::SearchError {
+            msg: "cannot deserialize response".to_owned(),
+        })?;
+
+    if let Some(document) = response.documents.first() {
+        Ok(Address {
+            x: document
+                .x
+                .parse()
+                .map_err(|_| LocationErrors::SearchError {
+                    msg: "float parse error".to_owned(),
+                })?,
+            y: document
+                .y
+                .parse()
+                .map_err(|_| LocationErrors::SearchError {
+                    msg: "float parse error".to_owned(),
+                })?,
+        })
+    } else {
+        Err(LocationErrors::SearchError {
+            msg: "no search result".to_owned(),
+        })
     }
 }

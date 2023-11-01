@@ -2,6 +2,7 @@ use kakao::Kakao;
 
 mod kakao;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Address {
     pub x: f32,
     pub y: f32,
