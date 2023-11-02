@@ -1,6 +1,7 @@
 use std::{convert::identity, sync::mpsc, time::Duration};
 
 use heekkr::kr::heek::{LatLng, Library, SearchResponse};
+use log::warn;
 use tokio::{task::JoinSet, time::timeout};
 use tonic::Status;
 
@@ -36,7 +37,7 @@ pub async fn get_libraries() -> Vec<Library> {
                 }
             }
             Ok(Err(e)) => {
-                println!("{e:#?}");
+                warn!("Failed to load libraries: {}, skipping", e);
             }
             Err(_) => {}
         }
@@ -62,13 +63,24 @@ pub async fn search(term: &str, library_ids: &Vec<String>) -> SearchResponseStre
             continue;
         }
         tokio::spawn(async move {
-            let result = timeout(Duration::from_secs(15), resolver.search(&term, library_ids))
-                .await
-                .map_err(|_| Status::deadline_exceeded(""))
-                .and_then(identity);
+            let result = timeout(
+                Duration::from_secs(15),
+                resolver.search(&term, library_ids.clone()),
+            )
+            .await
+            .map_err(|_| Status::deadline_exceeded(""))
+            .and_then(identity);
 
-            if let Ok(entities) = result {
-                let _ = tx.send(Ok(SearchResponse { entities }));
+            match result {
+                Ok(entities) => {
+                    let _ = tx.send(Ok(SearchResponse { entities }));
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to search({}, {:?}): {}, skipping",
+                        &term, &library_ids, err
+                    );
+                }
             };
         });
     }

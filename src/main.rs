@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, pin::Pin};
+use std::{env, net::SocketAddr, pin::Pin};
 
 use clap::{Parser, Subcommand};
 use heekkr::kr::heek::{
@@ -72,27 +72,40 @@ async fn serve(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+fn main() {
+    if let Ok(dsn) = env::var("SENTRY_DSN") {
+        let _guard = sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                ..Default::default()
+            },
+        ));
+    };
 
-    match &cli.command {
-        Commands::Serve { address } => {
-            serve(*address).await?;
-        }
-        Commands::Libraries => {
-            let libraries = get_libraries().await;
-            println!("{libraries:#?}");
-        }
-        Commands::Search { keyword, library } => {
-            let mut stream = search(keyword, library).await;
-            while let Some(value) = stream.next().await {
-                if let Ok(response) = value {
-                    println!("{response:#?}");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let cli = Cli::parse();
+
+            match &cli.command {
+                Commands::Serve { address } => {
+                    serve(*address).await.unwrap();
                 }
-            }
-        }
-    }
-
-    Ok(())
+                Commands::Libraries => {
+                    let libraries = get_libraries().await;
+                    println!("{libraries:#?}");
+                }
+                Commands::Search { keyword, library } => {
+                    let mut stream = search(keyword, library).await;
+                    while let Some(value) = stream.next().await {
+                        if let Ok(response) = value {
+                            println!("{response:#?}");
+                        }
+                    }
+                }
+            };
+        });
 }

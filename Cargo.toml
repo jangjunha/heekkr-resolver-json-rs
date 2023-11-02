@@ -19,3 +19,5 @@ clap = { version = "4.4", features = ["derive"] }
 url = "2.4.1"
 cached = "0.46.0"
 cached-store-gcs = { version = "0.1.1", default-features = false, features = ["rustls-tls"] }
+sentry = { version = "0.31.7", default-features = false, features = ["reqwest", "rustls", "backtrace", "contexts", "panic", "debug-images", "log"] }
+log = "0.4.20"

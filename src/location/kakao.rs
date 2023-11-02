@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use cached::proc_macro::io_cached;
 use cached_store_gcs::GcsCache;
+use log::warn;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Client,
@@ -69,6 +70,17 @@ impl LocationService for Kakao {
     convert = r#"{ keyword.to_owned() }"#
 )]
 async fn search_keyword(client: &Client, keyword: &str) -> Result<Address, LocationErrors> {
+    let res = _search_keyword(client, keyword).await;
+    if let Err(err) = &res {
+        warn!(
+            "Failed to search location for keyword {}: {:?}",
+            keyword, err
+        );
+    }
+    res
+}
+
+async fn _search_keyword(client: &Client, keyword: &str) -> Result<Address, LocationErrors> {
     let response = client
         .get("https://dapi.kakao.com/v2/local/search/keyword.json")
         .query(&[("query", keyword), ("size", "1")])
